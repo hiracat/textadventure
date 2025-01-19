@@ -1,6 +1,5 @@
 use std::{
     collections::HashSet,
-    fmt::format,
     io::{self, stdin, Write},
     thread::sleep,
     time::Duration,
@@ -12,7 +11,7 @@ fn main() {
     let mut locations = init_locations();
     let mut game_state = GameState {
         inventory: HashSet::new(),
-        current_room: LocationId::Starter,
+        current_room: LocationId::CrystalCave,
     };
 
     loop {
@@ -24,7 +23,7 @@ fn main() {
         loop {
             // First get the action of the match by getting value of key in hasmap
             let action = match process_input(&game_state, &current_room) {
-                Some(x) => x.clone(), // Dereference and copy the LocationId
+                Some(x) => x.clone(),
                 None => {
                     slow_type("you cant do that\n");
                     continue; // Skip the rest and start the loop over
@@ -41,11 +40,13 @@ fn main() {
                 }
                 Action::Pickup(x) => {
                     current_room.items.remove(&x);
-                    game_state.inventory.insert(x);
+                    game_state.inventory.insert(x.clone());
+                    slow_type(&format!("you pick up the {}\n", x.name));
                 }
                 Action::Replace(x) => {
                     game_state.inventory.remove(&x);
-                    current_room.items.insert(x);
+                    current_room.items.insert(x.clone());
+                    slow_type(&format!("you put back the {}\n", x.name));
                 }
                 Action::Use(x) => {
                     if let Some(callback) = x.use_item {
@@ -64,7 +65,7 @@ fn main() {
                     }
                     slow_type("\n");
                 }
-                Action::GetHelp => {
+                Action::Help => {
                     todo!()
                 }
                 Action::Exit => {
@@ -79,57 +80,57 @@ fn process_input(game_state: &GameState, location: &Location) -> Option<Action> 
     let mut input = String::new();
     let _ = stdin().read_line(&mut input);
     let input = input.trim_ascii().to_lowercase();
-    // quit
-    if input == "quit" || input == "q" {
+
+    // input must be an exact match
+    let quit_input = ["quit", "q", "exit"];
+    let help_input = ["help", "h", "?"];
+    let inventory_input = ["inventory", "i", "inv"];
+
+    // words will be searched through entire input string
+    let moveto_words = ["go to", "go", "walk", "take", "go through", "go back"];
+    let pickup_words = ["pick up", "take", "grab", "steal"];
+    let ret_words = ["return", "replace", "put back"];
+    let use_words = ["use"];
+    let examine_words = ["examine", "look at", "inspect"];
+
+    if quit_input.iter().any(|&word| word == input) {
         return Some(Action::Exit);
     }
-    if input == "help" {
-        return Some(Action::GetHelp);
+    if help_input.iter().any(|&word| word == input) {
+        return Some(Action::Help);
     }
-    if input == "inventory" {
+    if inventory_input.iter().any(|&word| word == input) {
         return Some(Action::ShowInventory);
     }
     // move between rooms
     for exit in location.exits.iter() {
-        if input.contains(&exit.name())
-            && (input.contains("take")
-                || input.contains("go to")
-                || input.contains("move to")
-                || input.contains("walk"))
+        if moveto_words.iter().any(|&word| input.contains(word))
+            && exit.0.iter().any(|x| input.contains(x))
         {
-            return Some(Action::Move(*exit));
+            return Some(Action::Move(exit.1));
         }
     }
     // items
     for item in location.items.iter() {
-        if input.contains(&item.name) {
-            if input.contains("pick up")
-                || input.contains("take")
-                || input.contains("steal")
-                || input.contains("grab")
-            {
-                return Some(Action::Pickup(item.clone()));
-            }
+        if pickup_words.iter().any(|&word| input.contains(word)) && input.contains(&item.name) {
+            return Some(Action::Pickup(item.clone()));
         }
     }
     for item in game_state.inventory.iter() {
         if input.contains(&item.name) {
-            if input.contains("use") {
+            if use_words.iter().any(|&word| input.contains(word)) && input.contains(&item.name) {
                 return Some(Action::Use(item.clone()));
-            } else if input.contains("put back")
-                || input.contains("replace")
-                || input.contains("return")
-            {
+            }
+            if ret_words.iter().any(|&word| input.contains(word)) && input.contains(&item.name) {
                 return Some(Action::Replace(item.clone()));
             }
         }
     }
     for item in location.items.iter().chain(game_state.inventory.iter()) {
-        if input.contains("examine") || input.contains("look at") {
+        if examine_words.iter().any(|&word| input.contains(word)) && input.contains(&item.name) {
             return Some(Action::Examine(item.clone()));
         }
     }
-
     None
 }
 
@@ -150,7 +151,7 @@ enum Action {
     Examine(Item),
     _Custom(fn(&mut Location, &mut GameState)),
     ShowInventory,
-    GetHelp,
+    Help,
     Exit,
 }
 
@@ -180,29 +181,29 @@ struct GameState {
 
 #[derive(Eq, Hash, PartialEq, Copy, Clone, Debug)]
 enum LocationId {
-    Starter,
+    CrystalCave,
     Room2,
     Hall,
     Unimplimented,
 }
-impl LocationId {
-    fn name(&self) -> String {
-        match self {
-            LocationId::Starter => "starter room",
-            LocationId::Room2 => "room 2",
-            LocationId::Hall => "hall",
-            LocationId::Unimplimented => unimplemented!(),
-        }
-        .to_string()
-    }
-}
+//impl LocationId {
+//    fn name(&self) -> String {
+//        match self {
+//            LocationId::CrystalCave => "crystal cave",
+//            LocationId::Room2 => "room 2",
+//            LocationId::Hall => "hall",
+//            LocationId::Unimplimented => unimplemented!(),
+//        }
+//        .to_string()
+//    }
+//}
 
 #[derive(Debug)]
 struct Location {
     descriptions: Vec<String>, // descriptions, in decreasing degrees of complexity
     print_description_callback: fn(&mut Self),
     description_detail_index: usize,
-    exits: HashSet<LocationId>,
+    exits: Vec<(Vec<&'static str>, LocationId)>,
     items: HashSet<Item>,
 
     enter_callback: Option<fn(&mut Self)>,
@@ -232,7 +233,7 @@ impl Default for Location {
             descriptions: vec!["an empty room".to_string()],
             description_detail_index: 0,
             print_description_callback: Location::print_default,
-            exits: HashSet::new(),
+            exits: Vec::new(),
             items: HashSet::new(),
             enter_callback: None,
             exit_callback: None,
@@ -242,51 +243,56 @@ impl Default for Location {
 fn init_locations() -> Vec<Location> {
     let mut locations = Vec::with_capacity(LocationId::Unimplimented as usize);
 
-    let mut exits = HashSet::new();
-    exits.insert(LocationId::Room2);
-    exits.insert(LocationId::Hall);
-    let mut items = HashSet::new();
-    items.insert(Item {
-        name: "bird".to_string(),
-        description: "it is a dead bird with a broken wing, probably trapped by the glass cieling and couldent escape".to_string(),
-        ..Default::default()
-    });
     locations.insert(
-        LocationId::Starter as usize,
+        LocationId::CrystalCave as usize,
         Location {
             descriptions: vec![
-                "hello, this is the starter room".to_string(),
-                "starter room".to_string(),
+                "You are in a cavern made of crystal walls and a glass ceiling. Before you, a pair of iron-reinforced double doors stand gilded, and to the side, a small hidden door awaits. On the floor there is a motionless bird".to_string(),
+                "You return to the shimmering crystal cavern.".to_string(),
             ],
-            exits,
-            items,
+            exits: vec![
+                (vec!["side door", "hidden"], LocationId::Room2),
+                (vec!["iron", "gilded", "double doors"], LocationId::Hall),
+            ],
+            items: {
+                let mut items = HashSet::new();
+                items.insert(Item {
+                    name: "bird".to_string(),
+                    description: "A dead bird with a broken wing, likely trapped under the glass ceiling.".to_string(),
+                    ..Default::default()
+                });
+                items
+            },
             ..Default::default()
         },
     );
 
-    let mut exits = HashSet::new();
-    exits.insert(LocationId::Starter);
     locations.insert(
         LocationId::Room2 as usize,
         Location {
-            descriptions: vec!["wow, this is room 2".to_string(), "room 2".to_string()],
-            exits,
+            descriptions: vec![
+                "You are in Room 2, a smaller, simpler space connected to the cavern.".to_string(),
+                "This is Room 2.".to_string(),
+            ],
+            exits: vec![(vec!["start", "crystal cavern"], LocationId::CrystalCave)],
+            items: HashSet::new(),
             ..Default::default()
         },
     );
 
-    let mut exits = HashSet::new();
-    exits.insert(LocationId::Starter);
     locations.insert(
         LocationId::Hall as usize,
         Location {
-            descriptions: vec!["wow, this is the hall".to_string(), "hall".to_string()],
-            exits,
+            descriptions: vec![
+                "You are in a grand hall with polished floors and towering columns, connected to the crystal cavern.".to_string(),
+                "This is the Hall.".to_string(),
+            ],
+            exits: vec![(vec!["starter", "crystal cavern"], LocationId::CrystalCave)],
+            items: HashSet::new(),
             enter_callback: Some(Location::entered_hall),
             ..Default::default()
         },
     );
 
-    // println!("{:#?}", locations);
     locations
 }
