@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     io::{self, stdin, Write},
     thread::sleep,
     time::Duration,
@@ -15,20 +15,33 @@ fn main() {
     };
 
     loop {
-        let current_room = &mut locations[game_state.current_room as usize];
+        let current_room = locations.get_mut(&game_state.current_room).unwrap();
+        current_room.print_description();
         if let Some(callback) = current_room.enter_callback {
             callback(current_room);
         }
-        current_room.print_description();
         loop {
             // First get the action of the match by getting value of key in hasmap
-            let action = match process_input(&game_state, &current_room) {
-                Some(x) => x.clone(),
-                None => {
-                    slow_type("you cant do that\n");
-                    continue; // Skip the rest and start the loop over
-                }
-            };
+            let mut action = Action::None;
+            let mut input = String::new();
+            let _ = stdin().read_line(&mut input);
+            let input = input.trim().to_lowercase();
+
+            let mut action = current_room.custom_input_processing(&input, &mut game_state);
+            println!("action?");
+            dbg!(action.clone());
+
+            if action == Action::None {
+                action = match process_input(&input, &mut game_state, current_room) {
+                    Some(x) => x.clone(),
+                    None => {
+                        slow_type("you cant do that\n");
+                        continue; // Skip the rest and start the loop over
+                    }
+                };
+            }
+            println!("action?");
+            dbg!(action.clone());
 
             match action {
                 Action::Move(x) => {
@@ -71,16 +84,17 @@ fn main() {
                 Action::Exit => {
                     return;
                 }
+                Action::None => unimplemented!(),
             }
         }
     }
 }
 
-fn process_input(game_state: &GameState, location: &Location) -> Option<Action> {
-    let mut input = String::new();
-    let _ = stdin().read_line(&mut input);
-    let input = input.trim_ascii().to_lowercase();
-
+fn process_input(
+    input: &str,
+    game_state: &mut GameState,
+    location: &mut Location,
+) -> Option<Action> {
     // input must be an exact match
     let quit_input = ["quit", "q", "exit"];
     let help_input = ["help", "h", "?"];
@@ -134,11 +148,15 @@ fn process_input(game_state: &GameState, location: &Location) -> Option<Action> 
     None
 }
 
+fn contains(input: &str, contains: Vec<&str>) -> bool {
+    contains.iter().any(|&word| input.contains(word))
+}
+
 fn slow_type(input: &str) {
     for char in input.chars() {
         print!("{}", char);
         let _ = io::stdout().flush();
-        sleep(Duration::from_millis(20));
+        sleep(Duration::from_millis(1));
     }
 }
 
@@ -153,6 +171,7 @@ enum Action {
     ShowInventory,
     Help,
     Exit,
+    None,
 }
 
 #[derive(Eq, Hash, PartialEq, Clone, Debug)]
@@ -182,8 +201,9 @@ struct GameState {
 #[derive(Eq, Hash, PartialEq, Copy, Clone, Debug)]
 enum LocationId {
     CrystalCave,
-    Room2,
+    SmallRoom,
     Hall,
+    BlockedByBoulder,
     Unimplimented,
 }
 //impl LocationId {
@@ -201,27 +221,33 @@ enum LocationId {
 #[derive(Debug)]
 struct Location {
     descriptions: Vec<String>, // descriptions, in decreasing degrees of complexity
-    print_description_callback: fn(&mut Self),
     description_detail_index: usize,
     exits: Vec<(Vec<&'static str>, LocationId)>,
     items: HashSet<Item>,
 
     enter_callback: Option<fn(&mut Self)>,
     exit_callback: Option<fn(&mut Self)>,
+    process_custom_input_callback: Option<fn(&str) -> Action>,
 }
 
 impl Location {
     pub fn print_description(&mut self) {
-        (self.print_description_callback)(self);
-    }
-
-    fn print_default(&mut self) {
         slow_type(&self.descriptions[self.description_detail_index]);
         slow_type("\n");
         if self.descriptions.len() - 1 > self.description_detail_index {
             self.description_detail_index += 1;
         }
     }
+
+    pub fn custom_input_processing(&mut self, input: &str, game_state: &mut GameState) -> Action {
+        if let Some(callback) = self.process_custom_input_callback {
+            println!("running custom input callback");
+            return (callback)(input);
+        }
+        println!("no input callback");
+        Action::None
+    }
+
     fn entered_hall(&mut self) {
         println!("entered hall wheeee");
     }
@@ -232,26 +258,53 @@ impl Default for Location {
         Location {
             descriptions: vec!["an empty room".to_string()],
             description_detail_index: 0,
-            print_description_callback: Location::print_default,
             exits: Vec::new(),
             items: HashSet::new(),
             enter_callback: None,
             exit_callback: None,
+            process_custom_input_callback: None,
         }
     }
 }
-fn init_locations() -> Vec<Location> {
-    let mut locations = Vec::with_capacity(LocationId::Unimplimented as usize);
+
+fn kick_boulder(location: &mut Location, game_state: &mut GameState) {
+    location.exits.push((
+        vec![
+            "boulder",
+            "hidden",
+            "sealed",
+            "covered",
+            "blocked",
+            "passageway",
+            "dark",
+        ],
+        LocationId::BlockedByBoulder,
+    ));
+    slow_type("you push on the boulder, and it slowly moves away to reveal a dark passageway\n");
+}
+
+fn input_kick_boulder(input: &str) -> Action {
+    let push_words = ["kick", "shove", "push", "move"];
+    if contains(&input, push_words.to_vec()) {
+        println!("in input_kick_boudler with a custom action");
+        return Action::_Custom(kick_boulder);
+    }
+    println!("in input_kcik boudler with no custom action");
+    Action::None
+}
+
+fn init_locations() -> HashMap<LocationId, Location> {
+    let mut locations = HashMap::with_capacity(LocationId::Unimplimented as usize);
 
     locations.insert(
-        LocationId::CrystalCave as usize,
+        LocationId::CrystalCave,
         Location {
             descriptions: vec![
                 "You are in a cavern made of crystal walls and a glass ceiling. Before you, a pair of iron-reinforced double doors stand gilded, and to the side, a small hidden door awaits. On the floor there is a motionless bird".to_string(),
                 "You return to the shimmering crystal cavern.".to_string(),
             ],
             exits: vec![
-                (vec!["side door", "hidden"], LocationId::Room2),
+                (vec!["side door", "hidden", "small"], LocationId::SmallRoom),
                 (vec!["iron", "gilded", "double doors"], LocationId::Hall),
             ],
             items: {
@@ -268,7 +321,7 @@ fn init_locations() -> Vec<Location> {
     );
 
     locations.insert(
-        LocationId::Room2 as usize,
+        LocationId::SmallRoom,
         Location {
             descriptions: vec![
                 "You are in Room 2, a smaller, simpler space connected to the cavern.".to_string(),
@@ -281,7 +334,34 @@ fn init_locations() -> Vec<Location> {
     );
 
     locations.insert(
-        LocationId::Hall as usize,
+        LocationId::SmallRoom,
+        Location {
+            descriptions: vec![
+                "You are in a small room, simpler and connected to the cavern. There is a boulder against the wall that looks unstable".to_string(),
+                "This is Room 2.".to_string(),
+            ],
+            exits: vec![(vec!["start", "crystal cavern"], LocationId::CrystalCave)],
+            items: HashSet::new(),
+            process_custom_input_callback: Some(input_kick_boulder),
+            ..Default::default()
+        },
+    );
+
+    locations.insert(
+        LocationId::BlockedByBoulder,
+        Location {
+            descriptions: vec![
+                "you walk down the dark passageway, and enter a small alcove, with some water dripping down the wall".to_string(),
+                "dark passageway room".to_string(),
+            ],
+            exits: vec![(vec!["small room", "passageway", "back"], LocationId::SmallRoom)],
+            items: HashSet::new(),
+            ..Default::default()
+        },
+    );
+
+    locations.insert(
+        LocationId::Hall ,
         Location {
             descriptions: vec![
                 "You are in a grand hall with polished floors and towering columns, connected to the crystal cavern.".to_string(),
