@@ -44,15 +44,8 @@ fn main() {
             let mut action = current_room.custom_input_processing(&input, &mut game_state);
             debug_print("action?");
             debug_print(action.clone());
-
             if action == Action::None {
-                action = match process_input(&input, &mut game_state, current_room) {
-                    Some(x) => x.clone(),
-                    None => {
-                        slow_type("you cant do that\n");
-                        continue; // Skip the rest and start the loop over
-                    }
-                };
+                action = process_input(&input, &mut game_state, current_room);
             }
             debug_print("action?");
             debug_print(action.clone());
@@ -83,7 +76,7 @@ fn main() {
                     }
                 }
                 Action::Examine(x) => slow_type(&format!("{}\n", x.description)),
-                Action::_Custom(x) => (x)(current_room, &mut game_state),
+                Action::Custom(x) => (x)(current_room, &mut game_state),
                 Action::ShowInventory => {
                     slow_type("INVENTORY:\n");
                     for item in game_state.inventory.iter() {
@@ -101,17 +94,16 @@ fn main() {
                 Action::Debug(x) => {
                     debug_mode(x);
                 }
-                Action::None => unimplemented!(),
+                Action::None => {
+                    slow_type("you cant do that\n");
+                    continue; // Skip the rest and start the loop over
+                }
             }
         }
     }
 }
 
-fn process_input(
-    input: &str,
-    game_state: &mut GameState,
-    location: &mut Location,
-) -> Option<Action> {
+fn process_input(input: &str, game_state: &mut GameState, location: &mut Location) -> Action {
     // input must be an exact match
     let quit_input = ["quit", "q", "exit"];
     let help_input = ["help", "h", "?"];
@@ -125,57 +117,58 @@ fn process_input(
     let use_words = ["use", "open"];
     let examine_words = ["examine", "look at", "inspect"];
 
-    if contains(input, debug_input.into()) {
+    if contains(input, debug_input) {
         if contains(input, vec!["off"]) {
-            return Some(Action::Debug(false));
+            return Action::Debug(false);
         } else {
-            return Some(Action::Debug(true));
+            return Action::Debug(true);
         }
     }
 
     if quit_input.iter().any(|&word| word == input) {
-        return Some(Action::Exit);
+        return Action::Exit;
     }
     if help_input.iter().any(|&word| word == input) {
-        return Some(Action::Help);
+        return Action::Help;
     }
     if inventory_input.iter().any(|&word| word == input) {
-        return Some(Action::ShowInventory);
+        return Action::ShowInventory;
     }
     // move between rooms
     for exit in location.exits.iter() {
-        if moveto_words.iter().any(|&word| input.contains(word))
-            && exit.0.iter().any(|x| input.contains(x))
-        {
-            return Some(Action::Move(exit.1));
+        if contains(input, moveto_words) && exit.0.iter().any(|x| input.contains(x)) {
+            return Action::Move(exit.1);
         }
     }
     // items
     for item in location.items.iter() {
-        if pickup_words.iter().any(|&word| input.contains(word)) && input.contains(&item.name) {
-            return Some(Action::Pickup(item.clone()));
+        if contains(input, pickup_words) && input.contains(&item.name) {
+            return Action::Pickup(item.clone());
         }
     }
     for item in game_state.inventory.iter() {
         if input.contains(&item.name) {
-            if use_words.iter().any(|&word| input.contains(word)) && input.contains(&item.name) {
-                return Some(Action::Use(item.clone()));
+            if contains(input, use_words) && input.contains(&item.name) {
+                return Action::Use(item.clone());
             }
-            if ret_words.iter().any(|&word| input.contains(word)) && input.contains(&item.name) {
-                return Some(Action::Replace(item.clone()));
+            if contains(input, ret_words) && input.contains(&item.name) {
+                return Action::Replace(item.clone());
             }
         }
     }
     for item in location.items.iter().chain(game_state.inventory.iter()) {
-        if examine_words.iter().any(|&word| input.contains(word)) && input.contains(&item.name) {
-            return Some(Action::Examine(item.clone()));
+        if contains(input, examine_words) && input.contains(&item.name) {
+            return Action::Examine(item.clone());
         }
     }
-    None
+    Action::None
 }
 
-fn contains(input: &str, contains: Vec<&str>) -> bool {
-    contains.iter().any(|&word| input.contains(word))
+fn contains<'a, I>(input: &str, words: I) -> bool
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    words.into_iter().any(|word| input.contains(word))
 }
 
 fn slow_type(input: &str) {
@@ -193,7 +186,7 @@ enum Action {
     Replace(Item),
     Use(Item),
     Examine(Item),
-    _Custom(fn(&mut Location, &mut GameState)),
+    Custom(fn(&mut Location, &mut GameState)),
     ShowInventory,
     Help,
     Debug(bool),
@@ -270,32 +263,6 @@ impl Default for Location {
     }
 }
 
-fn kick_boulder(location: &mut Location, game_state: &mut GameState) {
-    location.exits.push((
-        vec![
-            "boulder",
-            "hidden",
-            "sealed",
-            "covered",
-            "blocked",
-            "passageway",
-            "dark",
-        ],
-        LocationId::Downloads,
-    ));
-    slow_type("you push on the boulder, and it slowly moves away to reveal a dark passageway\n");
-}
-
-fn input_kick_boulder(input: &str) -> Action {
-    let push_words = ["kick", "shove", "push", "move"];
-    if contains(&input, push_words.to_vec()) {
-        debug_print("in input_kick_boudler with a custom action");
-        return Action::_Custom(kick_boulder);
-    }
-    debug_print("in input_kcik boudler with no custom action");
-    Action::None
-}
-
 #[derive(Eq, Hash, PartialEq, Copy, Clone, Debug)]
 enum LocationId {
     USB,
@@ -335,6 +302,22 @@ fn cont_beginning(input: &str) -> Action {
     }
 }
 
+fn list_files(location: &mut Location, game_state: &mut GameState) {
+    for item in location.items.iter() {
+        slow_type(item.name);
+        slow_type(", ");
+    }
+    slow_type("\n");
+}
+
+fn list_files_input(input: &str) -> Action {
+    if input.contains("list") || input.contains("file") {
+        Action::Custom(list_files)
+    } else {
+        Action::None
+    }
+}
+
 fn init_locations() -> HashMap<LocationId, Location> {
     let mut locations = HashMap::with_capacity(LocationId::Unimplimented as usize);
 
@@ -342,11 +325,11 @@ fn init_locations() -> HashMap<LocationId, Location> {
         LocationId::USB,
         Location {
             descriptions: vec![
-                "You wake up, you have another job to do. You hear the familiar bling of windows automatically mounting your host, its time to work now. All you have to now is \x1b[5mcontinue.\x1b[5m",
+                "You wake up, you have another job to do. You hear the familiar bling of windows automatically mounting your host, its time to work now. All you have to now is continue.\x1b[5m",
                 "Back to the safety of the usb, you will go back to file explorer when you catch your breath",
             ],
             exits: vec![
-                (vec!["file explorer"], LocationId::FileExplorer),
+                (vec!["file explorer", "explorer"], LocationId::FileExplorer),
             ],
             process_custom_input_callback: Some(cont_beginning),
             ..Default::default()
@@ -363,7 +346,7 @@ fn init_locations() -> HashMap<LocationId, Location> {
             exits: vec![
                 (vec!["desktop"], LocationId::Desktop),
                 (vec!["downloads"], LocationId::Downloads),
-                (vec!["dusic"], LocationId::Music),
+                (vec!["music"], LocationId::Music),
                 (vec!["home", "usb"], LocationId::USB),
             ],
             items: HashSet::new(),
@@ -374,8 +357,8 @@ fn init_locations() -> HashMap<LocationId, Location> {
     locations.insert(
         LocationId::Desktop,
         Location {
-            descriptions: vec!["You Look around their desktop, nothing you are after, maybe some good photos, but she probably has backups, oh, and a symlink to chrome too, that is very useful", "The Desktop"],
-            exits: vec![(vec!["start", "crystal cavern"], LocationId::USB)],
+            descriptions: vec!["You Look around their desktop, nothing you are after, a cat photo, but she probably has backups, oh, and a symlink to chrome too, that is very useful", "The Desktop"],
+            exits: vec![(vec!["file explorer", "explorer" ], LocationId::FileExplorer)],
             items: {
                 let mut items = HashSet::new();
                 items.insert(Item {
@@ -383,7 +366,6 @@ fn init_locations() -> HashMap<LocationId, Location> {
                     description: "A photo, what could it be?",
                     use_item: Some(show_photo),
                         ..Default::default()
-
                 });
                 items
             },
@@ -395,23 +377,53 @@ fn init_locations() -> HashMap<LocationId, Location> {
         LocationId::Downloads,
         Location {
             descriptions: vec![
-                "you walk down the dark passageway, and enter a small alcove, with some water dripping down the wall",
-                "dark passageway room",
+                "You are in her downloads folder, there are so many files, you can list them out one by one",
+                "downloads",
             ],
-            exits: vec![(vec!["small room", "passageway", "back"], LocationId::FileExplorer)],
-            items: HashSet::new(),
+            exits: vec![(vec!["back", "file explorer"], LocationId::FileExplorer)],
+            items: {
+                let mut items = HashSet::new();
+                items.insert(Item {
+                    name: "chrome_installer.exe",
+                    description: "just a normal chrome installer, is that useful?",
+                        ..Default::default()
+                });
+                items.insert(Item {
+                    name: "adobe_photoshop.exe",
+                    description: "photoshop? seriously, fuck adobe",
+                        ..Default::default()
+                });
+                items.insert(Item {
+                    name: "google_recovery_codes.txt",
+                    description: "recovery codes for 2fa, and you keep them in your downloads? thats a really bad idea",
+                        ..Default::default()
+                });
+                items.insert(Item {
+                    name: "img1010432123234.jpeg",
+                    description: "probably just a meme",
+                        ..Default::default()
+                });
+                items.insert(Item {
+                    name: "resume.pdf",
+                    description: "oh, this might be worth something",
+                        ..Default::default()
+                });
+                items.insert(Item {
+                    name: "homework.pdf",
+                    description: "oh, they are a student?",
+                        ..Default::default()
+                });
+                items
+            },
+            process_custom_input_callback: Some(list_files_input),
             ..Default::default()
         },
     );
     locations.insert(
         LocationId::Music,
         Location {
-            descriptions: vec![
-                "you walk down the dark passageway, and enter a small alcove, with some water dripping down the wall",
-                "dark passageway room",
-            ],
-            exits: vec![(vec!["small room", "passageway", "back"], LocationId::FileExplorer)],
-            items: HashSet::new(),
+            descriptions: vec!["Music Folder, its empty"],
+            exits: vec![(vec!["file explorer", "explorer"], LocationId::FileExplorer)],
             ..Default::default()
         },
     );
